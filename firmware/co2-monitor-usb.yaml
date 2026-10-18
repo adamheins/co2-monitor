@@ -1,0 +1,43 @@
+# USB-only variant: no Wi-Fi, readings are printed over USB serial as
+#   DATA,<co2_ppm>,<temp_C>,<rh_percent>
+# every 30 s. Flash and update over USB only.
+esphome:
+  name: co2-monitor-usb
+
+esp32:
+  board: adafruit_qtpy_esp32s3_n4r2
+  framework:
+    type: esp-idf
+
+logger:
+  level: INFO   # hides debug chatter so the DATA lines stand out
+
+i2c:
+  sda: GPIO41   # QT Py ESP32-S3 STEMMA QT port
+  scl: GPIO40
+
+sensor:
+  - platform: scd4x
+    co2:
+      name: "CO2"
+      id: co2
+    automatic_self_calibration: true
+    update_interval: 30s
+
+  - platform: sht4x
+    temperature:
+      name: "Temperature"
+      id: temp
+    humidity:
+      name: "Humidity"
+      id: rh
+    update_interval: 30s
+
+# Print one machine-readable line every 30 s
+interval:
+  - interval: 30s
+    then:
+      - logger.log:
+          level: INFO
+          format: "DATA,%.0f,%.2f,%.2f"
+          args: ['id(co2).state', 'id(temp).state', 'id(rh).state']

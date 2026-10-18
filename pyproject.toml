@@ -1,0 +1,29 @@
+[project]
+name = "co2-monitor"
+version = "0.1.0"
+description = "Serial logger and terminal dashboard for an ESP32 + SCD41/SHT45 CO2 monitor"
+readme = "README.md"
+authors = [
+    { name = "Adam Heins", email = "mail@adamheins.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "pyserial>=3.5",
+    "rich>=13.7",
+]
+
+[project.scripts]
+co2-monitor = "co2_monitor.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.21,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
+[tool.pyright]
+venvPath = "."
+venv = ".venv"

@@ -1,0 +1,16 @@
+# ESPHome
+/firmware/.esphome/
+secrets.yaml
+
+# Python
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+.venv/
+.pytest_cache/
+
+# Logged sensor data
+/data/*.csv
