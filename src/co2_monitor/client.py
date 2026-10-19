@@ -90,7 +90,7 @@ def run(server, interval, plain):
 def main():
     parser = argparse.ArgumentParser(description="Live dashboard for a co2-monitor server.")
     parser.add_argument(
-        "--server", default="http://127.0.0.1:8765", help="server URL (default: %(default)s)"
+        "--server", default="http://localhost:8080", help="server URL (default: %(default)s)"
     )
     parser.add_argument(
         "--interval", type=float, default=5, help="seconds between polls (default: %(default)s)"

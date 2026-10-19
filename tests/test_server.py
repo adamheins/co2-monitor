@@ -7,7 +7,8 @@ import pytest
 
 from co2_monitor.client import ServerClient
 from co2_monitor.models import Reading
-from co2_monitor.server import MonitorHTTPServer, ReadingStore, SerialReader
+from co2_monitor import server as server_module
+from co2_monitor.server import MonitorHTTPServer, ReadingStore, SerialReader, dashboard_urls
 from co2_monitor.storage import CsvLog
 
 T0 = datetime.datetime(2026, 10, 3, 17, 0, 0)
@@ -37,6 +38,21 @@ def test_serial_state_change_detection():
     assert store.set_serial_state(True)
     assert not store.set_serial_state(True)
     assert store.set_serial_state(False, "gone")
+
+
+def test_dashboard_urls_all_interfaces(monkeypatch):
+    monkeypatch.setattr(server_module, "local_ip", lambda: "10.0.0.5")
+    assert dashboard_urls("0.0.0.0", 80) == (["http://10.0.0.5/"], "http://localhost/")
+    assert dashboard_urls("0.0.0.0", 8080) == (["http://10.0.0.5:8080/"], "http://localhost:8080/")
+
+
+def test_dashboard_urls_offline(monkeypatch):
+    monkeypatch.setattr(server_module, "local_ip", lambda: None)
+    assert dashboard_urls("0.0.0.0", 80) == ([], "http://localhost/")
+
+
+def test_dashboard_urls_specific_host():
+    assert dashboard_urls("127.0.0.1", 8765) == (["http://127.0.0.1:8765/"], None)
 
 
 def test_handle_line_logs_and_stores(tmp_path):

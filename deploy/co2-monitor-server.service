@@ -1,0 +1,32 @@
+# systemd *user* service for the CO2 monitor server (serial logger + web dashboard).
+#
+# Install (links this file into ~/.config/systemd/user/):
+#   systemctl --user link ~/dev/code/co2-monitor/deploy/co2-monitor-server.service
+# Start now / start at login:
+#   systemctl --user start co2-monitor-server
+#   systemctl --user enable co2-monitor-server
+# Keep it running when you're logged out (and start it at boot):
+#   loginctl enable-linger
+# Logs:
+#   journalctl --user -u co2-monitor-server -f
+#
+# Paths assume the project lives at ~/dev/code/co2-monitor and `uv sync` has
+# created its .venv. The serial device can move between /dev/ttyACM0 and
+# /dev/ttyACM1; a /dev/serial/by-id/... path is stable if you want to pin it.
+
+[Unit]
+Description=CO2 monitor server (serial logger + web dashboard)
+Documentation=file://%h/dev/code/co2-monitor/README.md
+
+[Service]
+Type=simple
+WorkingDirectory=%h/dev/code/co2-monitor
+ExecStart=%h/dev/code/co2-monitor/.venv/bin/co2-monitor-server --device /dev/ttyACM0 --port 8080
+Environment=PYTHONUNBUFFERED=1
+# SIGINT takes the same clean-shutdown path as Ctrl+C.
+KillSignal=SIGINT
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

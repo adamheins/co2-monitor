@@ -15,8 +15,11 @@ readings responses changes too, so clients know to fetch everything again.
 
 import argparse
 import datetime
+import errno
 import json
 import math
+import socket
+import sys
 import threading
 import time
 import uuid
@@ -260,6 +263,35 @@ class Handler(BaseHTTPRequestHandler):
         pass  # clients poll every few seconds; keep the console for readings
 
 
+def local_ip():
+    """This machine's primary network address, or None if it has no network."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            # connect() on a UDP socket sends nothing; it just picks the outgoing
+            # interface. 192.0.2.1 is a reserved documentation address.
+            s.connect(("192.0.2.1", 80))
+            return s.getsockname()[0]
+    except OSError:
+        return None
+
+
+def dashboard_urls(host, port):
+    """URLs to reach the dashboard: (network URLs, this-machine URL)."""
+    suffix = "" if port == 80 else f":{port}"
+    if host in ("0.0.0.0", ""):
+        ip = local_ip()
+        return ([f"http://{ip}{suffix}/"] if ip else []), f"http://localhost{suffix}/"
+    return [f"http://{host}{suffix}/"], None
+
+
+BIND_PERMISSION_HELP = """\
+Permission denied listening on port {port}: on Linux, ports below 1024 need extra
+permission. Either use another port (e.g. --port 8080), or allow it, for example:
+  sudo sysctl net.ipv4.ip_unprivileged_port_start={port}
+  (to keep it after reboots, put "net.ipv4.ip_unprivileged_port_start={port}"
+  in /etc/sysctl.d/99-unprivileged-ports.conf)"""
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Read the CO2 monitor over USB, log readings to CSV and serve them over HTTP."
@@ -272,22 +304,34 @@ def main():
     )
     parser.add_argument(
         "--host",
-        default="127.0.0.1",
-        help="address to listen on; 0.0.0.0 serves other machines too (default: %(default)s)",
+        default="0.0.0.0",
+        help="address to listen on; 127.0.0.1 for this machine only (default: %(default)s, "
+        "all interfaces)",
     )
-    parser.add_argument("--port", type=int, default=8765, help="HTTP port (default: %(default)s)")
+    parser.add_argument("--port", type=int, default=8080, help="HTTP port (default: %(default)s)")
     args = parser.parse_args()
 
     # Preload recent readings so clients get the full 24 h after a restart.
     store = ReadingStore(load_history(args.out, datetime.datetime.now() - HISTORY_SPAN))
+    # Bind before touching the serial device or the log, so a port problem fails fast.
+    try:
+        httpd = MonitorHTTPServer((args.host, args.port), store, args.out, args.device)
+    except PermissionError:
+        sys.exit(BIND_PERMISSION_HELP.format(port=args.port))
+    except OSError as e:
+        if e.errno == errno.EADDRINUSE:
+            sys.exit(f"Port {args.port} is already in use; pick another with --port.")
+        raise
+
+    network, local = dashboard_urls(args.host, args.port)
+    if network:
+        print(f"Dashboard at {', '.join(network)}" + (f"  (on this machine: {local})" if local else ""))
+    else:
+        print(f"Dashboard at {local} (no network address found)")
+    print(f"Logging {args.device} to {args.out} (Ctrl+C to stop)", flush=True)
+
     with CsvLog(args.out) as log:
         SerialReader(args.device, store, log).start()
-        httpd = MonitorHTTPServer((args.host, args.port), store, args.out, args.device)
-        print(
-            f"Dashboard at http://{args.host}:{args.port}/ · logging {args.device} to {args.out} "
-            "(Ctrl+C to stop)",
-            flush=True,
-        )
         try:
             httpd.serve_forever()
         except KeyboardInterrupt:
