@@ -13,7 +13,8 @@ dependencies = [
 ]
 
 [project.scripts]
-co2-monitor = "co2_monitor.cli:main"
+co2-monitor = "co2_monitor.client:main"
+co2-monitor-server = "co2_monitor.server:main"
 
 [build-system]
 requires = ["uv_build>=0.12.21,<0.13.0"]

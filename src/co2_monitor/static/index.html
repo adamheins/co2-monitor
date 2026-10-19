@@ -1,0 +1,764 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CO₂ Monitor</title>
+<style>
+  :root {
+    color-scheme: light;
+    --page: #f9f9f7;
+    --surface: #fcfcfb;
+    --ink: #0b0b0b;
+    --ink-2: #52514e;
+    --muted: #898781;
+    --grid: #e1e0d9;
+    --axis: #c3c2b7;
+    --border: rgba(11, 11, 11, 0.10);
+    --hover: rgba(11, 11, 11, 0.05);
+    --series: #2a78d6;
+    --good: #0ca30c;
+    --warning: #fab219;
+    --serious: #ec835a;
+    --critical: #d03b3b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --page: #0d0d0d;
+      --surface: #1a1a19;
+      --ink: #f0efec;
+      --ink-2: #c3c2b7;
+      --grid: #2c2c2a;
+      --axis: #383835;
+      --border: rgba(255, 255, 255, 0.10);
+      --hover: rgba(255, 255, 255, 0.06);
+      --series: #3987e5;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page: #0d0d0d;
+    --surface: #1a1a19;
+    --ink: #f0efec;
+    --ink-2: #c3c2b7;
+    --grid: #2c2c2a;
+    --axis: #383835;
+    --border: rgba(255, 255, 255, 0.10);
+    --hover: rgba(255, 255, 255, 0.06);
+    --series: #3987e5;
+  }
+
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--page);
+    color: var(--ink);
+    font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 24px 16px 48px; }
+
+  header.top {
+    display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between;
+    gap: 4px 16px; margin-bottom: 16px;
+  }
+  h1 { font-size: 20px; font-weight: 600; margin: 0; }
+  .conn { margin: 0; color: var(--ink-2); font-size: 14px; display: flex; gap: 6px; align-items: baseline; }
+
+  .icon { display: inline-block; width: 1.1em; text-align: center; font-weight: 700; }
+  .icon[data-state="good"] { color: var(--good); }
+  .icon[data-state="warning"] { color: var(--warning); }
+  .icon[data-state="serious"] { color: var(--serious); }
+  .icon[data-state="critical"] { color: var(--critical); }
+  .icon[data-state="idle"] { color: var(--muted); }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+  }
+
+  .tiles {
+    display: grid; gap: 12px; margin-bottom: 20px;
+    grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1fr);
+  }
+  @media (max-width: 720px) {
+    .tiles { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+    .tile.hero { grid-column: 1 / -1; }
+  }
+  .tile { padding: 16px 18px; }
+  .tile .label { color: var(--ink-2); font-size: 14px; }
+  .tile .value { margin: 2px 0 6px; display: flex; align-items: baseline; gap: 6px; }
+  .tile .num { font-size: 34px; font-weight: 600; line-height: 1.1; }
+  .tile.hero .num { font-size: 56px; }
+  .tile .unit { color: var(--ink-2); font-size: 15px; }
+  .tile .state { color: var(--ink-2); font-size: 14px; min-height: 1.45em; }
+
+  .filters {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-bottom: 12px;
+  }
+  .seg {
+    display: inline-flex; padding: 3px; gap: 2px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+  }
+  .seg button, .btn {
+    font: inherit; font-size: 14px; color: var(--ink-2); background: transparent;
+    border: 0; border-radius: 7px; padding: 5px 12px; cursor: pointer;
+  }
+  .seg button:hover, .btn:hover { background: var(--hover); }
+  .seg button[aria-checked="true"] {
+    background: var(--page); color: var(--ink); font-weight: 600;
+    box-shadow: inset 0 0 0 1px var(--border);
+  }
+  .spacer { flex: 1; }
+  .btn {
+    background: var(--surface); border: 1px solid var(--border); text-decoration: none;
+    display: inline-block; padding: 6px 12px;
+  }
+  .btn[aria-pressed="true"] { color: var(--ink); font-weight: 600; }
+  :focus-visible { outline: 2px solid var(--series); outline-offset: 2px; }
+
+  .charts { display: grid; gap: 12px; transition: opacity 0.15s; }
+  .loading { opacity: 0.55; }
+  figure.chart { margin: 0; padding: 14px 16px 6px; }
+  figure.chart figcaption {
+    display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline;
+    gap: 2px 12px; margin-bottom: 4px;
+  }
+  figure.chart h2 { font-size: 15px; font-weight: 600; margin: 0; }
+  figure.chart h2 .unit { color: var(--ink-2); font-weight: 400; }
+  .stats { color: var(--ink-2); font-size: 13px; }
+  .plot { position: relative; border-radius: 6px; }
+  .plot svg { display: block; width: 100%; overflow: visible; }
+
+  svg text { font: 11px system-ui, -apple-system, "Segoe UI", sans-serif; fill: var(--muted); }
+  svg .ytick { font-variant-numeric: tabular-nums; }
+  svg .grid { stroke: var(--grid); stroke-width: 1; shape-rendering: crispEdges; }
+  svg .baseline { stroke: var(--axis); stroke-width: 1; shape-rendering: crispEdges; }
+  svg .ref { stroke: var(--axis); stroke-width: 1; shape-rendering: crispEdges; }
+  svg .reflabel { paint-order: stroke; stroke: var(--surface); stroke-width: 4px; stroke-linejoin: round; }
+  svg .line { fill: none; stroke: var(--series); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+  svg .pt { fill: var(--series); }
+  svg .enddot, svg .hoverdot { fill: var(--series); stroke: var(--surface); stroke-width: 2; }
+  svg .crosshair { stroke: var(--muted); stroke-width: 1; shape-rendering: crispEdges; }
+  svg .empty { font-size: 13px; fill: var(--ink-2); }
+
+  .tooltip {
+    position: fixed; z-index: 10; pointer-events: none; min-width: 170px;
+    background: var(--surface); color: var(--ink); border: 1px solid var(--border);
+    border-radius: 10px; padding: 10px 12px; font-size: 13px;
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.12);
+  }
+  .tooltip .time { color: var(--ink-2); margin-bottom: 6px; }
+  .tooltip .row { display: flex; align-items: center; gap: 8px; margin-top: 3px; }
+  .tooltip .key { width: 12px; height: 2px; border-radius: 1px; background: var(--series); flex: none; }
+  .tooltip .val { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .tooltip .name { color: var(--ink-2); }
+
+  .table-card { padding: 4px 0; overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { padding: 7px 16px; text-align: right; white-space: nowrap; }
+  th:first-child, td:first-child { text-align: left; }
+  th { color: var(--ink-2); font-weight: 600; border-bottom: 1px solid var(--grid); position: sticky; top: 0; background: var(--surface); }
+  td { font-variant-numeric: tabular-nums; border-bottom: 1px solid var(--grid); }
+  tr:last-child td { border-bottom: 0; }
+  .note { color: var(--muted); font-size: 13px; margin: 10px 2px 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <h1>CO₂ Monitor</h1>
+    <p class="conn" aria-live="polite"><span class="icon" id="conn-icon" data-state="idle">…</span><span id="conn-text">Connecting…</span></p>
+  </header>
+
+  <section class="tiles" aria-label="Current readings">
+    <div class="card tile hero">
+      <div class="label">CO₂</div>
+      <div class="value"><span class="num" id="v-co2_ppm">–</span><span class="unit">ppm</span></div>
+      <div class="state" id="s-co2_ppm"></div>
+    </div>
+    <div class="card tile">
+      <div class="label">Temperature</div>
+      <div class="value"><span class="num" id="v-temp_c">–</span><span class="unit">°C</span></div>
+      <div class="state" id="s-temp_c"></div>
+    </div>
+    <div class="card tile">
+      <div class="label">Humidity</div>
+      <div class="value"><span class="num" id="v-rh_percent">–</span><span class="unit">% RH</span></div>
+      <div class="state" id="s-rh_percent"></div>
+    </div>
+  </section>
+
+  <div class="filters">
+    <div class="seg" role="radiogroup" aria-label="Time range" id="ranges">
+      <button type="button" role="radio" data-hours="1">1 h</button>
+      <button type="button" role="radio" data-hours="6">6 h</button>
+      <button type="button" role="radio" data-hours="24">24 h</button>
+      <button type="button" role="radio" data-hours="168">7 d</button>
+      <button type="button" role="radio" data-hours="720">30 d</button>
+    </div>
+    <span class="spacer"></span>
+    <button type="button" class="btn" id="table-toggle" aria-pressed="false">Table view</button>
+    <a class="btn" href="/api/readings.csv" download="co2_log.csv">Download CSV</a>
+  </div>
+
+  <main id="charts" class="charts"></main>
+  <section id="table-view" class="card table-card" hidden>
+    <table>
+      <thead><tr><th>Time</th><th>CO₂ (ppm)</th><th>Temperature (°C)</th><th>Humidity (% RH)</th><th>Readings</th></tr></thead>
+      <tbody id="table-body"></tbody>
+    </table>
+  </section>
+  <p class="note" id="note"></p>
+</div>
+<div class="tooltip" id="tooltip" role="status" hidden></div>
+
+<script>
+"use strict";
+
+const FIELDS = [
+  { key: "co2_ppm", title: "CO₂", unit: "ppm", digits: 0, minSpan: 100, floor: 0,
+    refs: [{ v: 800, label: "800 · moderate" }, { v: 1200, label: "1200 · poor" }, { v: 2000, label: "2000 · very poor" }] },
+  { key: "temp_c", title: "Temperature", unit: "°C", digits: 1, minSpan: 1, refs: [] },
+  { key: "rh_percent", title: "Humidity", unit: "% RH", digits: 1, minSpan: 5, floor: 0, refs: [] },
+];
+const ICONS = { good: "✓", warning: "!", serious: "▲", critical: "✕", idle: "…" };
+const STALE_AFTER_MS = 90_000;
+const PLOT_H = 170, M = { top: 10, right: 14, bottom: 26, left: 46 };
+const SVGNS = "http://www.w3.org/2000/svg";
+
+function co2State(v) {
+  if (v < 800) return ["good", "Good"];
+  if (v < 1200) return ["warning", "Moderate"];
+  if (v < 2000) return ["serious", "Poor, ventilate"];
+  return ["critical", "Very poor, ventilate now"];
+}
+function tempState(v) {
+  if (v < 18) return ["warning", "Cool"];
+  if (v > 26) return ["warning", "Warm"];
+  return ["good", "Comfortable"];
+}
+function rhState(v) {
+  if (v < 30) return ["warning", "Dry"];
+  if (v > 60) return ["warning", "Humid"];
+  return ["good", "Comfortable"];
+}
+const STATES = { co2_ppm: co2State, temp_c: tempState, rh_percent: rhState };
+
+const state = {
+  hours: 24,
+  status: null,        // latest /api/status
+  series: null,        // latest /api/series
+  offsetMs: 0,         // server clock minus browser clock
+  error: null,         // last error talking to the server
+  lastLatestTs: undefined,
+  lastSeriesFetch: 0,
+  seriesToken: 0,
+  fetching: false,     // a series request is in flight
+  hover: null,         // index into series points, or null
+  tableView: false,
+  charts: [],          // per-field render info
+};
+
+// ---------- helpers ----------
+const parseTs = (s) => new Date(s).getTime();   // server sends local time without an offset
+const serverNow = () => Date.now() + state.offsetMs;
+const fmtCache = {};
+function fmt(v, digits) {
+  const f = fmtCache[digits] ||= new Intl.NumberFormat(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits });
+  return f.format(v);
+}
+const timeFmt = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", hour12: false });
+const dateFmt = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" });
+const fullFmt = new Intl.DateTimeFormat(undefined, { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false });
+function ago(ms) {
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 90) return `${s} s ago`;
+  const m = Math.round(s / 60);
+  if (m < 90) return `${m} min ago`;
+  const h = Math.round(m / 60);
+  if (h < 36) return `${h} h ago`;
+  return `${Math.round(h / 24)} d ago`;
+}
+function svg(tag, attrs, parent) {
+  const e = document.createElementNS(SVGNS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(e);
+  return e;
+}
+function setIcon(elIcon, kind) {
+  elIcon.dataset.state = kind;
+  elIcon.textContent = ICONS[kind];
+}
+async function getJSON(url) {
+  const resp = await fetch(url, { cache: "no-store" });
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  return resp.json();
+}
+function niceStep(span, count) {
+  const raw = span / count;
+  const mag = 10 ** Math.floor(Math.log10(raw));
+  const n = raw / mag;
+  return (n < 1.5 ? 1 : n < 3 ? 2 : n < 7 ? 5 : 10) * mag;
+}
+function yDomain(values, field) {
+  let lo = Math.min(...values), hi = Math.max(...values);
+  if (hi - lo < field.minSpan) {
+    const mid = (lo + hi) / 2;
+    lo = mid - field.minSpan / 2;
+    hi = mid + field.minSpan / 2;
+  }
+  const pad = (hi - lo) * 0.05;   // keep the line off the plot edges
+  lo -= pad;
+  hi += pad;
+  if (field.floor !== undefined) lo = Math.max(lo, field.floor);
+  const step = niceStep(hi - lo, 4);
+  lo = Math.floor(lo / step) * step;
+  hi = Math.ceil(hi / step) * step;
+  const ticks = [];
+  for (let v = lo; v <= hi + step / 2; v += step) ticks.push(+v.toFixed(6));
+  return { lo, hi, ticks, step };
+}
+const TIME_STEPS = [5, 10, 15, 30, 60, 120, 180, 360, 720, 1440, 2880, 10080].map((m) => m * 60_000);
+function timeTicks(start, end, maxTicks) {
+  const step = TIME_STEPS.find((s) => (end - start) / s <= maxTicks) || TIME_STEPS.at(-1);
+  const off = new Date(start).getTimezoneOffset() * 60_000;   // align ticks to local wall-clock time
+  const ticks = [];
+  for (let t = Math.ceil((start - off) / step) * step + off; t <= end; t += step) ticks.push(t);
+  return { ticks, step };
+}
+function tickLabel(t, step) {
+  const d = new Date(t);
+  const midnight = d.getHours() === 0 && d.getMinutes() === 0;
+  return step >= 86_400_000 || midnight ? dateFmt.format(d) : timeFmt.format(d);
+}
+
+// ---------- status / tiles ----------
+function renderTiles() {
+  const latest = state.status && state.status.latest;
+  for (const f of FIELDS) {
+    const num = document.getElementById(`v-${f.key}`);
+    const st = document.getElementById(`s-${f.key}`);
+    st.replaceChildren();
+    if (!latest) { num.textContent = "–"; continue; }
+    const v = latest[f.key];
+    num.textContent = fmt(v, f.digits);
+    const [kind, label] = STATES[f.key](v);
+    const icon = document.createElement("span");
+    icon.className = "icon";
+    setIcon(icon, kind);
+    st.append(icon, document.createTextNode(" " + label));
+  }
+}
+
+function renderConn() {
+  const icon = document.getElementById("conn-icon");
+  const text = document.getElementById("conn-text");
+  const s = state.status;
+  const latest = s && s.latest;
+  const age = latest ? serverNow() - parseTs(latest.timestamp) : null;
+  let kind, msg;
+  if (state.error) {
+    kind = "critical";
+    msg = `Can't reach the server (${state.error}), retrying`;
+  } else if (!s) {
+    kind = "idle"; msg = "Connecting…";
+  } else if (!s.serial_connected) {
+    kind = "serious";
+    msg = `Monitor not connected on ${s.device}` + (s.serial_error ? `: ${s.serial_error}` : "");
+  } else if (!latest) {
+    kind = "idle"; msg = "Waiting for the first reading";
+  } else if (age > STALE_AFTER_MS) {
+    kind = "warning"; msg = `No new reading since ${ago(age)}`;
+  } else {
+    kind = "good"; msg = `Live · last reading ${ago(age)}`;
+  }
+  setIcon(icon, kind);
+  text.textContent = msg;
+}
+
+// ---------- charts ----------
+function buildCharts() {
+  const root = document.getElementById("charts");
+  root.replaceChildren();
+  state.charts = FIELDS.map((field) => {
+    const fig = document.createElement("figure");
+    fig.className = "card chart";
+    const cap = document.createElement("figcaption");
+    const h2 = document.createElement("h2");
+    const unit = document.createElement("span");
+    unit.className = "unit";
+    unit.textContent = ` (${field.unit})`;
+    h2.append(document.createTextNode(field.title), unit);
+    const stats = document.createElement("span");
+    stats.className = "stats";
+    cap.append(h2, stats);
+    const plot = document.createElement("div");
+    plot.className = "plot";
+    plot.tabIndex = 0;
+    fig.append(cap, plot);
+    root.append(fig);
+    const chart = { field, fig, plot, stats };
+    attachHover(chart);
+    return chart;
+  });
+}
+
+function seriesTimes() {
+  return state.series ? state.series.points.map((p) => parseTs(p.t)) : [];
+}
+
+function renderCharts() {
+  const s = state.series;
+  if (!s) return;
+  const points = s.points;
+  const times = seriesTimes();
+  const start = parseTs(s.start), end = parseTs(s.end);
+  const gapMs = Math.max(2.5 * s.bucket_s * 1000, 120_000);
+  const rangeLabel = document.querySelector('#ranges [aria-checked="true"]').textContent;
+
+  for (const chart of state.charts) {
+    const { field, plot, stats } = chart;
+    const width = Math.max(plot.clientWidth, 280);
+    const W = width - M.left - M.right;
+    const H = PLOT_H;
+    const root = svg("svg", { width, height: H + M.top + M.bottom, viewBox: `0 0 ${width} ${H + M.top + M.bottom}`, role: "img" });
+    const g = svg("g", { transform: `translate(${M.left},${M.top})` }, root);
+    const x = (t) => ((t - start) / (end - start)) * W;
+
+    const st = s.stats && s.stats[field.key];
+    stats.textContent = st
+      ? `Min ${fmt(st.min, field.digits)} · Avg ${fmt(st.mean, field.digits)} · Max ${fmt(st.max, field.digits)}`
+      : "";
+
+    // x axis
+    const { ticks: xt, step: xstep } = timeTicks(start, end, Math.max(2, Math.floor(W / 60)));
+    for (const t of xt) {
+      const tx = x(t);
+      if (tx < 16 || tx > W - 16) continue;
+      svg("text", { x: tx, y: H + 18, "text-anchor": "middle" }, g).textContent = tickLabel(t, xstep);
+    }
+
+    if (!points.length) {
+      svg("line", { class: "baseline", x1: 0, x2: W, y1: H + 0.5, y2: H + 0.5 }, g);
+      svg("text", { class: "empty", x: W / 2, y: H / 2, "text-anchor": "middle" }, g).textContent = "No readings in this range";
+      root.setAttribute("aria-label", `${field.title}: no readings in the last ${rangeLabel}`);
+      plot.replaceChildren(root);
+      chart.geom = null;
+      continue;
+    }
+
+    const values = points.map((p) => p[field.key]);
+    const dom = yDomain(values, field);
+    const y = (v) => H - ((v - dom.lo) / (dom.hi - dom.lo)) * H;
+
+    // grid + y ticks
+    for (const v of dom.ticks) {
+      const ty = Math.round(y(v)) + 0.5;
+      if (v !== dom.lo) svg("line", { class: "grid", x1: 0, x2: W, y1: ty, y2: ty }, g);
+      svg("text", { class: "ytick", x: -8, y: ty + 4, "text-anchor": "end" }, g).textContent = fmt(v, dom.step < 1 ? 1 : 0);
+    }
+    svg("line", { class: "baseline", x1: 0, x2: W, y1: H + 0.5, y2: H + 0.5 }, g);
+
+    // reference levels (CO2 thresholds), only where they fall inside the plotted range
+    for (const ref of field.refs) {
+      if (ref.v <= dom.lo || ref.v >= dom.hi) continue;
+      const ty = Math.round(y(ref.v)) + 0.5;
+      svg("line", { class: "ref", x1: 0, x2: W, y1: ty, y2: ty }, g);
+      svg("text", { class: "reflabel", x: 4, y: ty - 4 }, g).textContent = ref.label;
+    }
+
+    // line, broken where data is missing
+    let d = "", segLen = 0;
+    const singles = [];
+    for (let i = 0; i < points.length; i++) {
+      const px = x(times[i]).toFixed(1), py = y(values[i]).toFixed(1);
+      const newSeg = i === 0 || times[i] - times[i - 1] > gapMs;
+      if (newSeg) {
+        if (segLen === 1) singles.push(i - 1);
+        d += `M${px},${py}`;
+        segLen = 1;
+      } else {
+        d += `L${px},${py}`;
+        segLen++;
+      }
+    }
+    if (segLen === 1) singles.push(points.length - 1);
+    svg("path", { class: "line", d }, g);
+    for (const i of singles) svg("circle", { class: "pt", cx: x(times[i]), cy: y(values[i]), r: 2.5 }, g);
+
+    // end dot on the most recent point
+    const last = points.length - 1;
+    svg("circle", { class: "enddot", cx: x(times[last]), cy: y(values[last]), r: 4 }, g);
+
+    // hover layer
+    const hover = svg("g", { visibility: "hidden" }, g);
+    const cross = svg("line", { class: "crosshair", y1: 0, y2: H }, hover);
+    const dot = svg("circle", { class: "hoverdot", r: 4.5 }, hover);
+
+    root.setAttribute("aria-label",
+      `${field.title} over the last ${rangeLabel}: ` +
+      (st ? `min ${fmt(st.min, field.digits)}, average ${fmt(st.mean, field.digits)}, max ${fmt(st.max, field.digits)} ${field.unit}` : "no data"));
+    plot.replaceChildren(root);
+    chart.geom = { x, y, values, times, hover, cross, dot, svg: root };
+  }
+  applyHover();
+}
+
+// ---------- hover / keyboard ----------
+function nearestIndex(times, t) {
+  let lo = 0, hi = times.length - 1;
+  if (hi < 0) return null;
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    if (times[mid] < t) lo = mid; else hi = mid;
+  }
+  return Math.abs(times[lo] - t) <= Math.abs(times[hi] - t) ? lo : hi;
+}
+
+function attachHover(chart) {
+  const { plot } = chart;
+  plot.addEventListener("pointermove", (ev) => {
+    const geom = chart.geom;
+    if (!geom) return;
+    const rect = geom.svg.getBoundingClientRect();
+    const px = ev.clientX - rect.left - M.left;
+    const s = state.series;
+    const start = parseTs(s.start), end = parseTs(s.end);
+    const t = start + (px / (rect.width - M.left - M.right)) * (end - start);
+    state.hover = nearestIndex(geom.times, t);
+    applyHover(chart);
+  });
+  plot.addEventListener("pointerleave", () => {
+    if (document.activeElement === plot) return;
+    state.hover = null;
+    applyHover();
+  });
+  plot.addEventListener("focus", () => {
+    if (state.hover === null && state.series && state.series.points.length) {
+      state.hover = state.series.points.length - 1;
+    }
+    applyHover(chart);
+  });
+  plot.addEventListener("blur", () => { state.hover = null; applyHover(); });
+  plot.addEventListener("keydown", (ev) => {
+    const n = state.series ? state.series.points.length : 0;
+    if (!n) return;
+    const keys = { ArrowLeft: -1, ArrowRight: 1, PageDown: -10, PageUp: 10 };
+    if (ev.key in keys) state.hover = Math.min(n - 1, Math.max(0, (state.hover ?? n - 1) + keys[ev.key]));
+    else if (ev.key === "Home") state.hover = 0;
+    else if (ev.key === "End") state.hover = n - 1;
+    else if (ev.key === "Escape") { state.hover = null; applyHover(); return; }
+    else return;
+    ev.preventDefault();
+    applyHover(chart);
+  });
+}
+
+function applyHover(activeChart) {
+  const tip = document.getElementById("tooltip");
+  const i = state.hover;
+  const points = state.series ? state.series.points : [];
+  if (i === null || i >= points.length) {
+    for (const c of state.charts) if (c.geom) c.geom.hover.setAttribute("visibility", "hidden");
+    tip.hidden = true;
+    return;
+  }
+  for (const c of state.charts) {
+    const g = c.geom;
+    if (!g) continue;
+    const cx = g.x(g.times[i]);
+    g.cross.setAttribute("x1", Math.round(cx) + 0.5);
+    g.cross.setAttribute("x2", Math.round(cx) + 0.5);
+    g.dot.setAttribute("cx", cx);
+    g.dot.setAttribute("cy", g.y(g.values[i]));
+    g.hover.setAttribute("visibility", "visible");
+  }
+
+  const p = points[i];
+  const rows = [document.createElement("div")];
+  rows[0].className = "time";
+  rows[0].textContent = fullFmt.format(new Date(parseTs(p.t))) + (p.n > 1 ? ` · avg of ${p.n} readings` : "");
+  for (const f of FIELDS) {
+    const row = document.createElement("div");
+    row.className = "row";
+    const key = document.createElement("span");
+    key.className = "key";
+    const val = document.createElement("span");
+    val.className = "val";
+    val.textContent = `${fmt(p[f.key], f.digits)} ${f.unit}`;
+    const name = document.createElement("span");
+    name.className = "name";
+    name.textContent = f.title;
+    row.append(key, val, name);
+    rows.push(row);
+  }
+  tip.replaceChildren(...rows);
+  tip.hidden = false;
+
+  const chart = activeChart || state.charts.find((c) => c.geom);
+  if (!chart || !chart.geom) return;
+  const rect = chart.geom.svg.getBoundingClientRect();
+  const cx = rect.left + M.left + chart.geom.x(chart.geom.times[i]);
+  const tw = tip.offsetWidth, th = tip.offsetHeight;
+  let left = cx + 14;
+  if (left + tw > window.innerWidth - 8) left = cx - 14 - tw;
+  let top = rect.top + M.top;
+  top = Math.min(Math.max(8, top), window.innerHeight - th - 8);
+  tip.style.left = `${Math.max(8, left)}px`;
+  tip.style.top = `${top}px`;
+}
+
+// ---------- table view ----------
+function renderTable() {
+  const body = document.getElementById("table-body");
+  const points = state.series ? state.series.points : [];
+  const rows = [];
+  for (let i = points.length - 1; i >= 0; i--) {
+    const p = points[i];
+    const tr = document.createElement("tr");
+    const cells = [fullFmt.format(new Date(parseTs(p.t))), ...FIELDS.map((f) => fmt(p[f.key], f.digits)), String(p.n)];
+    for (const c of cells) {
+      const td = document.createElement("td");
+      td.textContent = c;
+      tr.append(td);
+    }
+    rows.push(tr);
+  }
+  if (!rows.length) {
+    const tr = document.createElement("tr");
+    const td = document.createElement("td");
+    td.colSpan = 5;
+    td.textContent = "No readings in this range";
+    tr.append(td);
+    rows.push(tr);
+  }
+  body.replaceChildren(...rows);
+}
+
+function renderNote() {
+  const s = state.series;
+  const note = document.getElementById("note");
+  if (!s || !s.points.length) { note.textContent = ""; return; }
+  const b = s.bucket_s;
+  const each = b < 90 ? `${Math.round(b)} s` : b < 5400 ? `${Math.round(b / 60)} min` : `${(b / 3600).toFixed(1)} h`;
+  note.textContent = `Each point averages the readings in a ${each} window.`;
+}
+
+function renderAll() {
+  renderCharts();
+  if (state.tableView) renderTable();
+  renderNote();
+}
+
+// ---------- data loading ----------
+async function fetchSeries() {
+  const token = ++state.seriesToken;
+  state.fetching = true;
+  state.lastSeriesFetch = Date.now();
+  const charts = document.getElementById("charts");
+  charts.classList.add("loading");
+  const width = (state.charts[0] && state.charts[0].plot.clientWidth) || 900;
+  const points = Math.max(60, Math.min(600, Math.floor((width - M.left - M.right) / 2)));
+  try {
+    const data = await getJSON(`/api/series?hours=${state.hours}&points=${points}`);
+    if (token !== state.seriesToken) return;   // a newer request superseded this one
+    // Keep an active hover on the same moment in time across refreshes.
+    const hoveredT = state.hover !== null ? seriesTimes()[state.hover] : null;
+    state.series = data;
+    state.hover = hoveredT !== null ? nearestIndex(seriesTimes(), hoveredT) : null;
+    renderAll();
+  } catch (e) {
+    if (token === state.seriesToken) state.error = e.message || String(e);
+    renderConn();
+  } finally {
+    if (token === state.seriesToken) {
+      state.fetching = false;
+      charts.classList.remove("loading");
+    }
+  }
+}
+
+async function pollStatus() {
+  try {
+    const s = await getJSON("/api/status");
+    state.status = s;
+    state.offsetMs = parseTs(s.server_time) - Date.now();
+    state.error = null;
+    renderTiles();
+    const ts = s.latest ? s.latest.timestamp : null;
+    const maxAge = state.hours > 24 ? 300_000 : 60_000;
+    const due = ts !== state.lastLatestTs || Date.now() - state.lastSeriesFetch > maxAge;
+    if (due && !state.fetching) {
+      state.lastLatestTs = ts;
+      fetchSeries();
+    }
+  } catch (e) {
+    state.error = e.message || String(e);
+  }
+  renderConn();
+}
+
+// ---------- controls ----------
+const RANGE_HASH = { 1: "1h", 6: "6h", 24: "24h", 168: "7d", 720: "30d" };
+
+function selectRange(hours, save) {
+  state.hours = hours;
+  for (const b of document.querySelectorAll("#ranges button")) {
+    const on = Number(b.dataset.hours) === hours;
+    b.setAttribute("aria-checked", on);
+    b.tabIndex = on ? 0 : -1;
+  }
+  if (save) {
+    try { localStorage.setItem("co2.hours", String(hours)); } catch {}
+    history.replaceState(null, "", `#${RANGE_HASH[hours]}`);   // bookmarkable
+  }
+}
+
+document.getElementById("ranges").addEventListener("click", (ev) => {
+  const b = ev.target.closest("button");
+  if (!b) return;
+  selectRange(Number(b.dataset.hours), true);
+  fetchSeries();
+});
+document.getElementById("ranges").addEventListener("keydown", (ev) => {
+  const buttons = [...document.querySelectorAll("#ranges button")];
+  const i = buttons.findIndex((b) => b.getAttribute("aria-checked") === "true");
+  const d = ev.key === "ArrowRight" || ev.key === "ArrowDown" ? 1 : ev.key === "ArrowLeft" || ev.key === "ArrowUp" ? -1 : 0;
+  if (!d) return;
+  ev.preventDefault();
+  const next = buttons[(i + d + buttons.length) % buttons.length];
+  next.focus();
+  next.click();
+});
+document.getElementById("table-toggle").addEventListener("click", (ev) => {
+  state.tableView = !state.tableView;
+  ev.currentTarget.setAttribute("aria-pressed", state.tableView);
+  document.getElementById("charts").hidden = state.tableView;
+  document.getElementById("table-view").hidden = !state.tableView;
+  state.hover = null;
+  applyHover();
+  if (state.tableView) renderTable(); else renderCharts();
+});
+
+let resizeQueued = false;
+new ResizeObserver(() => {
+  if (resizeQueued) return;
+  resizeQueued = true;
+  requestAnimationFrame(() => { resizeQueued = false; if (!state.tableView) renderCharts(); });
+}).observe(document.getElementById("charts"));
+
+// Range from the URL hash (#7d), else the last one used, else 24 h.
+let saved = Number(Object.keys(RANGE_HASH).find((h) => `#${RANGE_HASH[h]}` === location.hash));
+if (!saved) { try { saved = Number(localStorage.getItem("co2.hours")); } catch {} }
+selectRange(RANGE_HASH[saved] ? saved : 24, false);
+buildCharts();
+pollStatus();
+setInterval(pollStatus, 5000);
+setInterval(renderConn, 1000);
+</script>
+</body>
+</html>

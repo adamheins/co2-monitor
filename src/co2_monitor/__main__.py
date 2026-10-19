@@ -1,3 +1,3 @@
-from co2_monitor.cli import main
+from co2_monitor.client import main
 
 main()

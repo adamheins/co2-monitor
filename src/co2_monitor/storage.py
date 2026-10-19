@@ -4,11 +4,13 @@ import csv
 import datetime
 from pathlib import Path
 
+from co2_monitor.models import Reading
+
 HEADER = ["timestamp", "co2_ppm", "temp_c", "rh_percent"]
 
 
 def load_history(path, since):
-    """(timestamp, co2, temp, rh) rows from an existing log CSV, newer than `since`."""
+    """Readings from an existing log CSV that are newer than `since`."""
     history = []
     try:
         with open(path, newline="") as f:
@@ -17,7 +19,7 @@ def load_history(path, since):
                     ts = datetime.datetime.fromisoformat(row["timestamp"])
                     if ts > since:
                         history.append(
-                            (
+                            Reading(
                                 ts,
                                 float(row["co2_ppm"]),
                                 float(row["temp_c"]),
@@ -43,9 +45,16 @@ class CsvLog:
         if new_file:
             self._write(HEADER)
 
-    def append(self, ts, co2, temp, rh):
+    def append(self, reading):
         # Same precision as the firmware prints.
-        self._write([ts.isoformat(timespec="seconds"), f"{co2:.0f}", f"{temp:.2f}", f"{rh:.2f}"])
+        self._write(
+            [
+                reading.timestamp.isoformat(timespec="seconds"),
+                f"{reading.co2_ppm:.0f}",
+                f"{reading.temp_c:.2f}",
+                f"{reading.rh_percent:.2f}",
+            ]
+        )
 
     def _write(self, row):
         self._writer.writerow(row)

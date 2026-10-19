@@ -1,7 +1,7 @@
 """Live terminal dashboard built with rich."""
 
 import datetime
-import time
+import threading
 from collections import deque
 
 from rich import box
@@ -14,7 +14,7 @@ from co2_monitor.trends import bucket_means, fill_single_gaps
 
 SPARK_CHARS = "▁▂▃▄▅▆▇█"
 TREND_WIDTH = 60  # characters per trend line
-HISTORY_SPAN = datetime.timedelta(hours=24)  # longest trend; also how much CSV is preloaded
+HISTORY_SPAN = datetime.timedelta(hours=24)  # longest trend window
 STALE_AFTER_S = 90  # warn if no reading for this long
 
 
@@ -72,13 +72,17 @@ def axis(width, left, middle, right):
 
 
 class Dashboard:
-    """Live terminal view; rich calls __rich__ on every refresh, so timers stay current."""
+    """Live terminal view of a co2-monitor server's data.
+
+    rich calls __rich__ on every refresh (from its own thread), so timers stay
+    current; the lock keeps that from racing with sync().
+    """
 
     METRICS = [
-        # key, label, unit, format, status function; order matches history rows
-        ("co2", "CO₂", "ppm", "{:.0f}", co2_status),
-        ("temp", "Temperature", "°C", "{:.1f}", temp_status),
-        ("rh", "Humidity", "% RH", "{:.1f}", rh_status),
+        # label, unit, format, status function; order matches Reading fields after timestamp
+        ("CO₂", "ppm", "{:.0f}", co2_status),
+        ("Temperature", "°C", "{:.1f}", temp_status),
+        ("Humidity", "% RH", "{:.1f}", rh_status),
     ]
 
     # title, span, axis labels
@@ -87,32 +91,45 @@ class Dashboard:
         ("Last 24 h", datetime.timedelta(hours=24), ("-24h", "-12h", "now")),
     ]
 
-    def __init__(self, port, out, history=()):
-        self.port, self.out = port, out
-        self.start = time.monotonic()
-        self.latest = None  # dict of metric -> value
-        self.latest_at = None  # datetime of latest reading
-        self.latest_mono = None
-        self.n_readings = 0  # readings received this run
-        self.history = deque(history)  # (datetime, co2, temp, rh), oldest first
+    def __init__(self, source):
+        self.source = source  # shown in the subtitle, e.g. the server URL
+        self.history = deque()  # Readings, oldest first
+        self.status = None  # latest /api/status payload
+        self.error = None  # last error talking to the server, if the last poll failed
+        self.clock_offset = datetime.timedelta(0)  # server clock minus local clock
+        self._lock = threading.Lock()
 
-    def update(self, ts, co2, temp, rh):
-        self.latest = {"co2": co2, "temp": temp, "rh": rh}
-        self.latest_at, self.latest_mono = ts, time.monotonic()
-        self.n_readings += 1
-        self.history.append((ts, co2, temp, rh))
-        while self.history and self.history[0][0] <= ts - HISTORY_SPAN:
-            self.history.popleft()
+    def sync(self, status, readings, reset=False):
+        """Apply a successful poll: server status plus any new readings."""
+        with self._lock:
+            if reset:
+                self.history.clear()
+            self.history.extend(readings)
+            if self.history:
+                cutoff = self.history[-1].timestamp - HISTORY_SPAN
+                while self.history[0].timestamp <= cutoff:
+                    self.history.popleft()
+            self.status = status
+            server_time = datetime.datetime.fromisoformat(status["server_time"])
+            self.clock_offset = server_time - datetime.datetime.now()
+            self.error = None
 
-    def _readings(self):
+    def set_error(self, message):
+        with self._lock:
+            self.error = message
+
+    def now(self):
+        """Current time on the server's clock, so ages are right across machines."""
+        return datetime.datetime.now() + self.clock_offset
+
+    def _readings(self, latest):
         table = Table.grid(padding=(0, 2))
         table.add_column(style="dim", min_width=12)
         table.add_column(justify="right", min_width=6)
         table.add_column(min_width=5)
         table.add_column()
-        assert self.latest is not None
-        for key, label, unit, fmt, status_fn in self.METRICS:
-            value = self.latest[key]
+        for i, (label, unit, fmt, status_fn) in enumerate(self.METRICS, start=1):
+            value = latest[i]
             status, style = status_fn(value)
             table.add_row(
                 label,
@@ -128,7 +145,7 @@ class Dashboard:
         for col in ("Min", "Avg", "Max"):
             table.add_column(col, justify="right", min_width=6)
         table.add_column("")
-        for i, (_, label, unit, fmt, _) in enumerate(self.METRICS, start=1):
+        for i, (label, unit, fmt, _) in enumerate(self.METRICS, start=1):
             values = [row[i] for row in rows]
             table.add_row(
                 label,
@@ -152,9 +169,8 @@ class Dashboard:
             Text(" " * len(first_label) + axis(TREND_WIDTH, *labels), style="dim"),
         )
 
-    def _windows(self):
+    def _windows(self, now):
         """Stats table plus CO2 trend for each time window that has data."""
-        now = datetime.datetime.now()
         parts = []
         for title, span, labels in self.WINDOWS:
             rows = [row for row in self.history if now - span < row[0] <= now]
@@ -168,35 +184,46 @@ class Dashboard:
             ]
         return parts
 
-    def _status_line(self):
-        running = format_duration(time.monotonic() - self.start)
-        if self.latest_mono is None:
-            return Text(
-                f"Waiting for first reading (sensor reports every 30 s) · running {running}",
-                style="dim",
-            )
-        ago = time.monotonic() - self.latest_mono
-        text = Text(
-            f"Last reading {self.latest_at:%H:%M:%S} ({ago:.0f} s ago) · "
-            f"{self.n_readings} reading{'s' if self.n_readings != 1 else ''} · running {running}",
-            style="dim",
-        )
-        if ago > STALE_AFTER_S:
-            text.append(f"\nNo data for {ago:.0f} s, check the USB connection", style="bold red")
-        return text
+    def _status_lines(self, now):
+        lines = []
+        if self.error is not None:
+            lines.append(Text(f"Can't reach the server: {self.error} (retrying)", style="bold red"))
+        status = self.status
+        serial_ok = status is None or status["serial_connected"]
+        if status is not None and not serial_ok:
+            error = status["serial_error"] or "not connected"
+            lines.append(Text(f"Server can't read {status['device']}: {error}", style="bold red"))
+
+        if self.history:
+            latest = self.history[-1]
+            ago = (now - latest.timestamp).total_seconds()
+            line = f"Last reading {latest.timestamp:%H:%M:%S} ({ago:.0f} s ago)"
+            if self.status is not None:
+                started = datetime.datetime.fromisoformat(self.status["started_at"])
+                line += f" · server up {format_duration((now - started).total_seconds())}"
+            lines.append(Text(line, style="dim"))
+            if ago > STALE_AFTER_S and self.error is None and serial_ok:
+                lines.append(Text(f"No new data for {ago:.0f} s", style="bold red"))
+        elif self.status is not None:
+            lines.append(Text("Waiting for first reading (sensor reports every 30 s)", style="dim"))
+        elif self.error is None:
+            lines.append(Text(f"Connecting to {self.source}…", style="dim"))
+        return lines
 
     def __rich__(self):
-        parts = []
-        if self.latest is not None:
-            parts += [self._readings(), Text("")]
-        parts += self._windows()
-        parts.append(self._status_line())
-        body = Group(*parts)
-        border = "dim" if self.latest is None else co2_status(self.latest["co2"])[1]
+        with self._lock:
+            now = self.now()
+            latest = self.history[-1] if self.history else None
+            parts = []
+            if latest is not None:
+                parts += [self._readings(latest), Text("")]
+            parts += self._windows(now)
+            parts += self._status_lines(now)
+        border = "dim" if latest is None else co2_status(latest.co2_ppm)[1]
         return Panel(
-            body,
+            Group(*parts),
             title="[bold]CO₂ Monitor[/bold]",
-            subtitle=f"[dim]{self.port} → {self.out} · Ctrl+C to stop[/dim]",
+            subtitle=f"[dim]{self.source} · Ctrl+C to stop[/dim]",
             border_style=border,
             expand=False,
             padding=(1, 2),
